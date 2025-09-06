@@ -1,0 +1,486 @@
+import React, { useState, useEffect } from 'react';
+import { Download, Upload, RefreshCcw, Calculator, Info } from 'lucide-react';
+
+const taxConfigs = {
+  "india-new": {
+    currency: "₹",
+    countryLabel: "India – New Regime",
+    notes: "Sample slabs. Update yearly.",
+    defaults: { standardDeduction: 0, otherDeductions: 0 },
+    bands: () => [
+      { upto: 300000, rate: 0 },
+      { upto: 700000, rate: 0.05 },
+      { upto: 1000000, rate: 0.10 },
+      { upto: 1200000, rate: 0.15 },
+      { upto: 1500000, rate: 0.20 },
+      { upto: null, rate: 0.30 },
+    ],
+  },
+  "india-old": {
+    currency: "₹",
+    countryLabel: "India – Old Regime",
+    notes: "Sample slabs. Update yearly. Add your 80C/80D etc. into 'Other deductions'.",
+    defaults: { standardDeduction: 0, otherDeductions: 0 },
+    bands: () => [
+      { upto: 250000, rate: 0 },
+      { upto: 500000, rate: 0.05 },
+      { upto: 1000000, rate: 0.20 },
+      { upto: null, rate: 0.30 },
+    ],
+  },
+  "us": {
+    currency: "$",
+    countryLabel: "United States – Federal",
+    notes: "Simplified federal. Add state taxes separately if needed.",
+    defaults: { standardDeduction: 0, otherDeductions: 0 },
+    defaultParams: { filing: "single", includeFICA: true },
+    bands: (p) => {
+      const filing = p?.filing ?? "single";
+      return filing === "married"
+        ? [
+            { upto: 22000, rate: 0.1 },
+            { upto: 94000, rate: 0.12 },
+            { upto: 201000, rate: 0.22 },
+            { upto: 383000, rate: 0.24 },
+            { upto: 487000, rate: 0.32 },
+            { upto: 732000, rate: 0.35 },
+            { upto: null, rate: 0.37 },
+          ]
+        : [
+            { upto: 11000, rate: 0.1 },
+            { upto: 47000, rate: 0.12 },
+            { upto: 100000, rate: 0.22 },
+            { upto: 191000, rate: 0.24 },
+            { upto: 243000, rate: 0.32 },
+            { upto: 366000, rate: 0.35 },
+            { upto: null, rate: 0.37 },
+          ];
+    },
+    extras: (_taxable, gross, p) => {
+      const items = [];
+      if (p?.includeFICA) {
+        const ssWageCap = 168600;
+        const socialSecurity = Math.min(gross, ssWageCap) * 0.062;
+        const medicare = gross * 0.0145;
+        items.push({ label: "Social Security (6.2%)", amount: socialSecurity });
+        items.push({ label: "Medicare (1.45%)", amount: medicare });
+      }
+      return items;
+    },
+    ParamsUI: ({ params, setParams }) => (
+      <>
+        <div>
+          <label className="text-sm font-medium leading-none">Filing Status</label>
+          <select
+            value={params.filing}
+            onChange={(e) => setParams({ ...params, filing: e.target.value })}
+            className="mt-1 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="single">Single</option>
+            <option value="married">Married Filing Jointly</option>
+          </select>
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={params.includeFICA}
+              onChange={(e) => setParams({ ...params, includeFICA: e.target.checked })}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-200 rounded-full peer-checked:bg-blue-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 peer-after:content-[''] peer-after:absolute peer-after:top-0.5 peer-after:left-[2px] peer-after:bg-white peer-after:border peer-after:rounded-full peer-after:h-5 peer-after:w-5 peer-after:transition-all peer-checked:after:translate-x-full"></div>
+            <span className="ml-3 text-sm text-slate-700">Include FICA (SS + Medicare)</span>
+          </label>
+        </div>
+      </>
+    ),
+  },
+  "uk": {
+    currency: "£",
+    countryLabel: "United Kingdom (rUK)",
+    notes: "Simplified Income Tax + optional NI (not Scotland). Update thresholds yearly.",
+    defaults: { standardDeduction: 0, otherDeductions: 0 },
+    defaultParams: { includeNI: true, personalAllowance: 12570 },
+    bands: (p) => [
+      { upto: p?.personalAllowance ?? 12570, rate: 0 },
+      { upto: 50270, rate: 0.20 },
+      { upto: 125140, rate: 0.40 },
+      { upto: null, rate: 0.45 },
+    ],
+    extras: (_taxable, gross, p) => {
+      const items = [];
+      if (p?.includeNI) {
+        const primaryThreshold = 12570;
+        const upperEarningsLimit = 50270;
+        const niLower = Math.max(0, Math.min(gross, upperEarningsLimit) - primaryThreshold) * 0.08;
+        const niUpper = Math.max(0, gross - upperEarningsLimit) * 0.02;
+        items.push({ label: "National Insurance (employee)", amount: niLower + niUpper });
+      }
+      return items;
+    },
+    ParamsUI: ({ params, setParams }) => (
+      <>
+        <div>
+          <label className="text-sm font-medium leading-none">Personal Allowance</label>
+          <input
+            type="number"
+            value={params.personalAllowance}
+            onChange={(e) => setParams({ ...params, personalAllowance: Number(e.target.value) })}
+            className="mt-1 flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={params.includeNI}
+              onChange={(e) => setParams({ ...params, includeNI: e.target.checked })}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-200 rounded-full peer-checked:bg-blue-600 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-300 peer-after:content-[''] peer-after:absolute peer-after:top-0.5 peer-after:left-[2px] peer-after:bg-white peer-after:border peer-after:rounded-full peer-after:h-5 peer-after:w-5 peer-after:transition-all peer-checked:after:translate-x-full"></div>
+            <span className="ml-3 text-sm text-slate-700">Include National Insurance</span>
+          </label>
+        </div>
+      </>
+    ),
+  },
+};
+
+const calcProgressiveTax = (income, bands) => {
+  let remaining = Math.max(0, income);
+  let lastCap = 0;
+  let total = 0;
+  const slices = [];
+
+  for (const band of bands) {
+    const cap = band.upto ?? Infinity;
+    const sliceAmount = Math.max(0, Math.min(remaining, cap - lastCap));
+    const sliceTax = sliceAmount * band.rate;
+    if (sliceAmount > 0) {
+      slices.push({ amount: sliceAmount, rate: band.rate, tax: sliceTax });
+      total += sliceTax;
+      remaining -= sliceAmount;
+      lastCap = cap;
+    }
+    if (remaining <= 0) break;
+  }
+  return { tax: total, slices };
+};
+
+const currencySymbolToISO = (sym) => {
+  switch (sym) {
+    case "₹": return "INR";
+    case "$": return "USD";
+    case "£": return "GBP";
+    default: return "USD";
+  }
+};
+
+const formatCurrency = (n, currency) => {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: currencySymbolToISO(currency),
+    maximumFractionDigits: 0
+  }).format(n);
+};
+
+// Main App Component
+const App = () => {
+  const [state, setState] = useState({
+    country: "india-new",
+    amount: 1200000,
+    period: "annual",
+    standardDeduction: 0,
+    otherDeductions: 0,
+    params: {},
+  });
+
+  const currentConfig = taxConfigs[state.country];
+  const grossAnnual = state.period === "annual" ? state.amount : state.amount * 12;
+  const deductions = state.standardDeduction + state.otherDeductions;
+  const taxableBase = Math.max(0, grossAnnual - deductions);
+
+  const { tax: incomeTax, slices } = calcProgressiveTax(taxableBase, currentConfig.bands(state.params));
+  const extras = currentConfig.extras ? currentConfig.extras(taxableBase, grossAnnual, state.params) : [];
+  const extraTotal = extras.reduce((a, b) => a + b.amount, 0);
+
+  const totalTax = incomeTax + extraTotal;
+  const netAnnual = Math.max(0, grossAnnual - totalTax);
+
+  const toDisplay = (n) => state.period === "annual" ? n : n / 12;
+  const marginalRate = slices.length ? slices[slices.length - 1].rate : 0;
+  const effRate = grossAnnual > 0 ? totalTax / grossAnnual : 0;
+
+  // Update state from URL on load
+  useEffect(() => {
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const decoded = urlParams.get("calc");
+      if (decoded) {
+        const savedState = JSON.parse(atob(decoded));
+        setState((prevState) => ({
+          ...prevState,
+          ...savedState,
+          params: { ...taxConfigs[savedState.country]?.defaultParams, ...savedState.params },
+        }));
+      } else {
+        setState((prevState) => ({
+          ...prevState,
+          params: taxConfigs[prevState.country]?.defaultParams || {},
+        }));
+      }
+    } catch (e) {
+      console.error("Failed to load state from URL:", e);
+      setState((prevState) => ({
+        ...prevState,
+        params: taxConfigs[prevState.country]?.defaultParams || {},
+      }));
+    }
+  }, []);
+
+  const handleCountryChange = (e) => {
+    const newCountry = e.target.value;
+    const newConfig = taxConfigs[newCountry];
+    setState({
+      ...state,
+      country: newCountry,
+      standardDeduction: newConfig.defaults.standardDeduction,
+      otherDeductions: newConfig.defaults.otherDeductions,
+      params: newConfig.defaultParams || {},
+    });
+  };
+
+  const handleSaveFile = () => {
+    const jsonString = JSON.stringify(state, null, 2);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'tax-calculator-state.json';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoadFile = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const loadedState = JSON.parse(event.target.result);
+          if (loadedState.country in taxConfigs) {
+            setState({
+              ...state,
+              ...loadedState,
+              params: { ...taxConfigs[loadedState.country]?.defaultParams, ...loadedState.params },
+            });
+          }
+        } catch (error) {
+          console.error("Error parsing file:", error);
+        }
+      };
+      reader.readAsText(file);
+    }
+  };
+
+  const handleReset = () => {
+    const initialConfig = taxConfigs["india-new"];
+    setState({
+      country: "india-new",
+      amount: 1200000,
+      period: "annual",
+      standardDeduction: initialConfig.defaults.standardDeduction,
+      otherDeductions: initialConfig.defaults.otherDeductions,
+      params: initialConfig.defaultParams || {},
+    });
+  };
+
+  const ParamComponent = currentConfig.ParamsUI;
+
+  const summaryData = [
+    { label: "Gross", value: formatCurrency(toDisplay(grossAnnual), currentConfig.currency) },
+    { label: "Deductions", value: formatCurrency(toDisplay(deductions), currentConfig.currency) },
+    { label: "Taxable Income", value: formatCurrency(toDisplay(taxableBase), currentConfig.currency) },
+    { label: "Income Tax", value: formatCurrency(toDisplay(incomeTax), currentConfig.currency) },
+    ...extras.map((ex) => ({ label: ex.label, value: formatCurrency(toDisplay(ex.amount), currentConfig.currency) })),
+  ];
+
+  return (
+    <div className="bg-slate-50 min-h-screen p-4 md:p-8 font-sans">
+      <div className="mx-auto max-w-5xl">
+        <div className="animate-in fade-in-0 duration-500">
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tight mb-2 flex items-center gap-3">
+            <Calculator size={32} />
+            Salary Tax Calculator <span className="text-slate-400 font-normal text-xl">({currentConfig.countryLabel})</span>
+          </h1>
+          <p className="text-slate-600 mb-6">Editable tax bands and payroll options. Defaults are illustrative—please update with latest official rates.</p>
+
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4 md:p-6 grid grid-cols-1 md:grid-cols-3 gap-6">
+            {/* Left Panel - Inputs */}
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Country / Regime</label>
+                <select
+                  value={state.country}
+                  onChange={handleCountryChange}
+                  className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Object.keys(taxConfigs).map((key) => (
+                    <option key={key} value={key}>
+                      {taxConfigs[key].countryLabel}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {ParamComponent && (
+                <ParamComponent params={state.params} setParams={(newParams) => setState({ ...state, params: newParams })} />
+              )}
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Input Period</label>
+                <div className="grid grid-cols-2 h-10 items-center rounded-md bg-slate-100 p-1 text-slate-500">
+                  <button
+                    onClick={() => setState({ ...state, period: 'annual' })}
+                    className={`inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-all ${state.period === 'annual' ? 'bg-white text-slate-900 shadow-sm' : ''}`}
+                  >
+                    Annual
+                  </button>
+                  <button
+                    onClick={() => setState({ ...state, period: 'monthly' })}
+                    className={`inline-flex items-center justify-center rounded-md px-3 py-1.5 text-sm font-medium transition-all ${state.period === 'monthly' ? 'bg-white text-slate-900 shadow-sm' : ''}`}
+                  >
+                    Monthly
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium">Gross Salary ({currentConfig.currency})</label>
+                <input
+                  type="number"
+                  value={state.amount}
+                  onChange={(e) => setState({ ...state, amount: Number(e.target.value) })}
+                  className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <input
+                  type="range"
+                  min="0"
+                  max="5000000"
+                  step="1000"
+                  value={state.amount}
+                  onChange={(e) => setState({ ...state, amount: Number(e.target.value) })}
+                  className="w-full h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer mt-2"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 pt-2">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Standard Deduction</label>
+                  <input
+                    type="number"
+                    value={state.standardDeduction}
+                    onChange={(e) => setState({ ...state, standardDeduction: Number(e.target.value) })}
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium">Other Deductions</label>
+                  <input
+                    type="number"
+                    value={state.otherDeductions}
+                    onChange={(e) => setState({ ...state, otherDeductions: Number(e.target.value) })}
+                    className="flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2 pt-3">
+                <button
+                  onClick={handleReset}
+                  className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors border border-slate-200 bg-white hover:bg-slate-100 h-10 px-4"
+                >
+                  <RefreshCcw size={16} className="mr-2" />
+                  Reset
+                </button>
+                <button
+                  onClick={handleSaveFile}
+                  className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors border border-slate-200 bg-white hover:bg-slate-100 h-10 px-4"
+                >
+                  <Download size={16} className="mr-2" />
+                  Save File
+                </button>
+                <label className="inline-flex items-center justify-center whitespace-nowrap rounded-md text-sm font-medium transition-colors border border-slate-200 bg-white hover:bg-slate-100 h-10 px-4 cursor-pointer">
+                  <input type="file" accept=".json" onChange={handleLoadFile} className="hidden" />
+                  <Upload size={16} className="mr-2" />
+                  Load File
+                </label>
+              </div>
+
+              {currentConfig.notes && (
+                <div className="flex items-start gap-2 text-xs text-slate-500 pt-3">
+                  <Info size={16} className="mt-0.5" />
+                  <span>{currentConfig.notes}</span>
+                </div>
+              )}
+            </div>
+
+            {/* Right Panel - Summary and Breakdown */}
+            <div className="md:col-span-2 grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+                <h3 className="font-semibold mb-2">Summary</h3>
+                <div className="space-y-2 text-sm">
+                  {summaryData.map(({ label, value }) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-slate-600">{label}</span>
+                      <span className="tabular-nums font-medium text-slate-800">{value}</span>
+                    </div>
+                  ))}
+                  <div className="h-px bg-slate-200 my-2" />
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Total Tax</span>
+                    <span className="tabular-nums font-medium text-slate-900">{formatCurrency(toDisplay(totalTax), currentConfig.currency)}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-600">Net Take-Home</span>
+                    <span className="tabular-nums font-medium text-emerald-600">{formatCurrency(toDisplay(netAnnual), currentConfig.currency)}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 pt-2 text-xs">
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <div className="text-slate-500 text-[11px]">Effective Rate</div>
+                      <div className="font-semibold">{(effRate * 100).toFixed(1) + "%"}</div>
+                    </div>
+                    <div className="bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <div className="text-slate-500 text-[11px]">Marginal Rate</div>
+                      <div className="font-semibold">{(marginalRate * 100).toFixed(1) + "%"}</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-4">
+                <h3 className="font-semibold mb-2">Tax Band Breakdown</h3>
+                <div className="space-y-2">
+                  {slices.length === 0 ? (
+                    <p className="text-sm text-slate-500">No taxable income in current setup.</p>
+                  ) : (
+                    slices.map((s, i) => (
+                      <div key={i} className="flex items-center justify-between text-sm bg-slate-50 rounded-xl p-2">
+                        <span>Band {i + 1} @ {(s.rate * 100).toFixed(0)}%</span>
+                        <span className="tabular-nums">{formatCurrency(toDisplay(s.amount), currentConfig.currency)} → {formatCurrency(toDisplay(s.tax), currentConfig.currency)}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default App;
